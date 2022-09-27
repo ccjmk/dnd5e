@@ -174,7 +174,8 @@ export function registerHandlebarsHelpers() {
   Handlebars.registerHelper({
     getProperty: foundry.utils.getProperty,
     "dnd5e-linkForUuid": linkForUuid,
-    "dnd5e-itemContext": itemContext
+    "dnd5e-itemContext": itemContext,
+    "dnd5e-unidentifiedName": unidentifiedName,
   });
 }
 
@@ -326,4 +327,40 @@ function _synchronizeActorSpells(actor, spellsMap) {
     toCreate.push(spellData);
   }
   return {toDelete, toCreate};
+}
+
+/**
+ * For unidentified items, returns a localized masked name based on the item type and base item, where appropriate.
+ * @param {object} item   The item to evaluate.
+ * @returns {string}      The localized text to show for the unidentified item (including item type)
+ * @private
+ */
+ export function unidentifiedName(item) {
+  const systemData = item.system;
+  let baseType;
+  let subtype;
+  switch(item.type) {
+    case 'weapon':
+      subtype = systemData.weaponType;
+      baseType = systemData.baseItem;
+      break;
+    case 'equipment':
+      subtype = systemData.armor.type;
+      baseType = systemData.baseItem;
+      break;
+    case 'consumable':
+      subtype = item.type;
+      baseType = systemData.consumableType;
+      break;
+  }
+  const postType = baseType != subtype 
+    ? subtype.capitalize() + baseType.capitalize()
+    : (subtype ?? baseType).capitalize();
+  const i18nKey = postType
+    ? `DND5E.${item.type.capitalize() + postType}` // e.g "DND5E.EquipmentShield": "Shield",
+    : `ITEM.Type${item.type.capitalize()}` ; // e.g "ITEM.TypeEquipment": "Equipment",
+  const localizedType = game.i18n.localize(i18nKey) ?? baseType;
+  return game.user.isGM
+    ? game.i18n.format('DND5E.UnidentifiedGM', {localizedType, trueName: item.name})
+    : game.i18n.format('DND5E.Unidentified', {localizedType});
 }

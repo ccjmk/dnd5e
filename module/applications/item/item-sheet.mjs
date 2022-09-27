@@ -3,11 +3,15 @@ import AdvancementMigrationDialog from "../advancement/advancement-migration-dia
 import TraitSelector from "../trait-selector.mjs";
 import ActiveEffect5e from "../../documents/active-effect.mjs";
 import * as Trait from "../../documents/actor/trait.mjs";
+import { unidentifiedName } from "../../utils.mjs";
 
 /**
  * Override and extend the core ItemSheet implementation to handle specific item types.
  */
 export default class ItemSheet5e extends ItemSheet {
+
+  currentlyBeingEdited = false;
+
   constructor(...args) {
     super(...args);
 
@@ -59,6 +63,17 @@ export default class ItemSheet5e extends ItemSheet {
     return `systems/dnd5e/templates/items/${this.item.type}.hbs`;
   }
 
+  /** @inheritdoc */
+  get title() {
+    return this.displayName;
+  }
+
+  /** 
+   * Name shown for the item; normally it's the item's, but if unidentified, it is masked as "Unidentified {type}"
+   * @type {string}
+   */
+  displayName;
+
   /* -------------------------------------------- */
   /*  Context Preparation                         */
   /* -------------------------------------------- */
@@ -68,12 +83,16 @@ export default class ItemSheet5e extends ItemSheet {
     const context = await super.getData(options);
     const item = context.item;
     const source = item.toObject();
+    const isIdentifiable = this._isIdentifiableType(item.type);
+    this.displayName = source.system.identified ? source.name : unidentifiedName(source), // TODO see if I can use this everywhere (e.g title, name input, hover on img)
 
     // Game system configuration
     context.config = CONFIG.DND5E;
 
     // Item rendering data
     foundry.utils.mergeObject(context, {
+      isGM: game.user.isGM,
+      displayName: this.displayName,
       source: source.system,
       system: item.system,
       labels: item.labels,
@@ -87,6 +106,17 @@ export default class ItemSheet5e extends ItemSheet {
       itemProperties: this._getItemProperties(),
       baseItems: await this._getItemBaseTypes(),
       isPhysical: item.system.hasOwnProperty("quantity"),
+      isIdentifiable: isIdentifiable,
+
+      showIdentifiedDesc: isIdentifiable && (game.user.isGM || source.system.identified),
+      // Enrich HTML description
+      descriptionHTML: await TextEditor.enrichHTML(item.system.description.value, {
+        secrets: item.isOwner,
+        async: true,
+        relativeTo: this.item
+      }),
+
+      showUnidentifiedDesc: isIdentifiable && (game.user.isGM || !source.system.identified),
 
       // Action Details
       isHealing: item.system.actionType === "heal",
@@ -128,6 +158,15 @@ export default class ItemSheet5e extends ItemSheet {
       relativeTo: this.item,
       rollData: context.rollData
     });
+    // Enrich HTML unidentified description
+    context.unidentifiedDescriptionHTML = await TextEditor.enrichHTML(item.system.description.unidentified, {
+      secrets: item.isOwner,
+      async: true,
+      relativeTo: this.item,
+      rollData: context.rollData
+    })
+    context.editingIdentifiedDesc = this.currentlyBeingEdited === 'system.description.value';
+    context.editingUnidentifiedDesc = this.currentlyBeingEdited === 'system.description.unidentified';
     return context;
   }
 
@@ -349,6 +388,13 @@ export default class ItemSheet5e extends ItemSheet {
 
   /* -------------------------------------------- */
 
+  _isIdentifiableType(type) {
+    const identifiableTypes = ['consumable', 'equipment', 'weapon'];
+    return identifiableTypes.includes(type);
+  }
+
+  /* -------------------------------------------- */
+
   /** @inheritDoc */
   setPosition(position={}) {
     if ( !(this._minimized || position.height) ) {
@@ -361,15 +407,25 @@ export default class ItemSheet5e extends ItemSheet {
 
   /** @inheritdoc */
   async activateEditor(name, options={}, initialContent="") {
-    options.relativeLinks = true;
-    options.plugins = {
-      menu: ProseMirror.ProseMirrorMenu.build(ProseMirror.defaultSchema, {
-        compact: true,
-        destroyOnSave: true,
-        onSave: () => this.saveEditor(name, {remove: true})
-      })
-    };
-    return super.activateEditor(name, options, initialContent);
+    console.log(name, options, initialContent);
+    
+    if(!this.currentlyBeingEdited &&  (name === 'system.description.value' || name ==='system.description.unidentified')) { 
+      this.currentlyBeingEdited = name;
+      this.render(); 
+    } else {
+      options.relativeLinks = true;
+      options.plugins = {
+        menu: ProseMirror.ProseMirrorMenu.build(ProseMirror.defaultSchema, {
+          compact: true,
+          destroyOnSave: true,
+          onSave: () =>{
+            this.saveEditor(name, {remove: true}) 
+            this.currentlyBeingEdited = false;
+          }
+        })
+      };
+      return super.activateEditor(name, options, initialContent);
+    }
   }
 
   /* -------------------------------------------- */
